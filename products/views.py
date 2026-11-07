@@ -1,179 +1,153 @@
-from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import AllowAny, IsAdminUser
-from rest_framework.filters import OrderingFilter, SearchFilter
-from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Avg, Count, Prefetch, ProtectedError, Q
+from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
+from rest_framework import status, viewsets
+from rest_framework.response import Response
 
+from core.permissions import IsStaffOrReadOnly
+
+from .filters import ProductFilter
+from .models import Brand, Category, Product, ProductField, ProductFieldValue, ProductImage
 from .serializers import (
-    CategoryListSerializer, CategoryDetailSerializer, BrandListSerializer,
-    BrandDetailSerializer, ProductListSerializer, ProductDetailSerializer,
-    ProductImageSerializer, ProductFieldSerializer, ProductFieldValueSerializer
+    BrandSerializer,
+    CategorySerializer,
+    ProductDetailSerializer,
+    ProductFieldSerializer,
+    ProductFieldValueSerializer,
+    ProductImageSerializer,
+    ProductListSerializer,
 )
 
-from .models import Category, Brand, Product, ProductImage, ProductField, ProductsFieldValue
-
-from .filters import (
-    ProductFilter, BrandFilter, CategoryFilter, ProductImageFilter,
-    ProductFieldFilter, ProductFieldValueFilter
-)
-
-from .permissions import IsOwner
-from rest_framework.serializers import ValidationError
+ACTIVE_PRODUCTS = Count("products", filter=Q(products__is_active=True))
 
 
-class CategoryViewSet(ModelViewSet):
-    queryset = Category.objects.all()
-    filterset_class = CategoryFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['name', 'description']
-    ordering_fields = ['name', 'created']
-    ordering = ['name']
+@extend_schema(tags=["catalog"])
+class CategoryViewSet(viewsets.ModelViewSet):
+    queryset = Category.objects.annotate(products_count=ACTIVE_PRODUCTS).order_by("name")
+    serializer_class = CategorySerializer
+    permission_classes = [IsStaffOrReadOnly]
+    search_fields = ["name", "description"]
+    ordering_fields = ["name", "created", "products_count"]
 
-    def get_serializer_class(self):
-        return CategoryListSerializer if self.action == 'list' else CategoryDetailSerializer
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
-    def get_permissions(self):
-        if self.action == 'create':
-            return [IsAdminUser()]
-        if self.action in ('update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
-
-
-class BrandViewSet(ModelViewSet):
-    queryset = Brand.objects.all()
-
-    filterset_class = BrandFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['name', 'description']
-    ordering_fields = ['name', 'created']
-    ordering = ['name']
-
-    def get_serializer_class(self):
-        return BrandListSerializer if self.action == 'list' else BrandDetailSerializer
-
-    def get_permissions(self):
-        if self.action == 'create':
-            return [IsAdminUser()]
-        if self.action in ('update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "Category still has products; move or delete them first."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
 
-class ProductViewSet(ModelViewSet):
-    queryset = Product.objects.all()
+@extend_schema(tags=["catalog"])
+class BrandViewSet(CategoryViewSet):
+    queryset = Brand.objects.annotate(products_count=ACTIVE_PRODUCTS).order_by("name")
+    serializer_class = BrandSerializer
 
+
+@extend_schema(tags=["catalog"])
+class ProductViewSet(viewsets.ModelViewSet):
+    """Catalog. Reads are public; writes require a staff account."""
+
+    permission_classes = [IsStaffOrReadOnly]
     filterset_class = ProductFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['name', 'description']
-    ordering_filters = ['price', 'stock', 'discount', 'created', 'average_rating']
-    ordering = ['-created']
+    search_fields = ["name", "description", "brand__name", "category__name"]
+    ordering_fields = ["price", "created", "name", "stock", "average_rating", "discount"]
+    ordering = ["-created"]
+
+    def get_queryset(self):
+        qs = (
+            Product.objects.select_related("category", "brand")
+            .annotate(
+                average_rating=Avg("reviews__rating"),
+                reviews_count=Count("reviews", distinct=True),
+            )
+            .order_by("-created")
+        )
+        if self.action == "list":
+            qs = qs.prefetch_related(
+                Prefetch("images", queryset=ProductImage.objects.filter(is_primary=True))
+            )
+        else:
+            qs = qs.prefetch_related(
+                "images",
+                Prefetch("field_values", ProductFieldValue.objects.select_related("field")),
+            )
+        user = self.request.user
+        if not (user.is_authenticated and user.is_staff):
+            qs = qs.filter(is_active=True)
+        return qs
 
     def get_serializer_class(self):
-        return ProductListSerializer if self.action == 'list' else ProductDetailSerializer
-
-    def get_permissions(self):
-        if self.action == 'create':
-            return [IsAdminUser()]
-        if self.action in ('update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        category_id = self.kwargs.get('category_pk')
-        brand_id = self.kwargs.get('brand_pk')
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        if brand_id:
-            queryset = queryset.filter(brand_id=brand_id)
-        return queryset
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['view'] = self
-        return context
-
-
-class ProductImageViewSet(ModelViewSet):
-    serializer_class = ProductImageSerializer
-    filterset_class = ProductImageFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['alt_text']
-    ordering_fields = ['product', 'is_primary']
-    ordering = ['-product']
-
-    def get_permissions(self):
-        if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
-
-    def get_queryset(self):
-        product_id = self.kwargs.get('product_pk')
-        if not product_id:
-            return ProductImage.objects.all()
-        return ProductImage.objects.filter(product_id=product_id)
+        return ProductListSerializer if self.action == "list" else ProductDetailSerializer
 
     def perform_create(self, serializer):
-        product_id = self.kwargs.get('product_pk')
-        product = Product.objects.get(id=product_id)
-        if product.created_by != self.request.user:
-            raise ValidationError({"error": "You are not the owner of this product."}, code=403)
-        serializer.save()
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        product_id = self.kwargs.get('product_pk')
-        if product_id:
-            context['product'] = Product.objects.get(id=product_id)
-        return context
+        serializer.save(created_by=self.request.user)
 
 
-class ProductFieldViewSet(ModelViewSet):
-    serializer_class = ProductFieldSerializer
+@extend_schema(tags=["catalog"])
+class ProductFieldViewSet(viewsets.ModelViewSet):
     queryset = ProductField.objects.all()
-    filterset_class = ProductFieldFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['name']
-    ordering_fields = ['name', 'field_type']
-    ordering = ['name']
-
-    def get_permissions(self):
-        if self.action == 'create':
-            return [IsAdminUser()]
-        if self.action in ('update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
+    serializer_class = ProductFieldSerializer
+    permission_classes = [IsStaffOrReadOnly]
+    filterset_fields = ["field_type"]
+    search_fields = ["name"]
 
 
-class ProductFieldValueViewSet(ModelViewSet):
-    serializer_class = ProductFieldValueSerializer
-    filterset_class = ProductFieldValueFilter
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    search_fields = ['value']
-    ordering_fields = ['value', 'product']
-    ordering = ['-product']
+class _ProductChildViewSet(viewsets.ModelViewSet):
+    """Base for resources nested under ``/products/{product_pk}/``."""
 
-    def get_permissions(self):
-        if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [IsOwner()]
-        return [AllowAny()]
+    permission_classes = [IsStaffOrReadOnly]
+    model = None
+
+    def get_product(self):
+        if not hasattr(self, "_product"):
+            self._product = get_object_or_404(Product, pk=self.kwargs["product_pk"])
+        return self._product
 
     def get_queryset(self):
-        product_id = self.kwargs.get('product_pk')
-        if not product_id:
-            return ProductsFieldValue.objects.all()
-        return ProductsFieldValue.objects.filter(product_id=product_id)
-
-    def perform_create(self, serializer):
-        product_id = self.kwargs.get('product_pk')
-        product = Product.objects.get(id=product_id)
-        if product.created_by != self.request.user:
-            raise ValidationError({"error": "You are not the owner of this product."}, code=403)
-        serializer.save()
+        if getattr(self, "swagger_fake_view", False):
+            return self.model.objects.none()
+        return self.model.objects.filter(product_id=self.kwargs["product_pk"])
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        product_id = self.kwargs.get('product_pk')
-        if product_id:
-            context['product'] = Product.objects.get(id=product_id)
+        if "product_pk" in self.kwargs:
+            context["product"] = self.get_product()
         return context
+
+    def perform_create(self, serializer):
+        serializer.save(product=self.get_product())
+
+
+@extend_schema(tags=["catalog"])
+class ProductImageViewSet(_ProductChildViewSet):
+    model = ProductImage
+    serializer_class = ProductImageSerializer
+    filterset_fields = ["is_primary"]
+
+    def _demote_other_primary(self, serializer):
+        if serializer.validated_data.get("is_primary"):
+            ProductImage.objects.filter(product=self.get_product(), is_primary=True).update(
+                is_primary=False
+            )
+
+    def perform_create(self, serializer):
+        self._demote_other_primary(serializer)
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self._demote_other_primary(serializer)
+        serializer.save()
+
+
+@extend_schema(tags=["catalog"])
+class ProductFieldValueViewSet(_ProductChildViewSet):
+    model = ProductFieldValue
+    serializer_class = ProductFieldValueSerializer
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("field")

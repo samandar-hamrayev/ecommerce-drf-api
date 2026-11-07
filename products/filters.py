@@ -1,59 +1,23 @@
 from django_filters import rest_framework as filters
-from .models import Product, Brand, Category, ProductImage, ProductField, ProductsFieldValue
+
+from .models import Product
 
 
 class ProductFilter(filters.FilterSet):
-    category = filters.NumberFilter(field_name='category__id', lookup_expr='exact')
-    brand = filters.NumberFilter(field_name='brand__id', lookup_expr='exact')
-    price_min = filters.NumberFilter(field_name='price', lookup_expr='gte')
-    price_max = filters.NumberFilter(field_name='price', lookup_expr='lte')
-    stock_min = filters.NumberFilter(field_name='stock', lookup_expr='gte')
-    stock_max = filters.NumberFilter(field_name='stock', lookup_expr='lte')
-    discount = filters.BooleanFilter(field_name='discount', lookup_expr='gt', method='has_discount')
-
-
-    def has_discount(self, quertset, name, value):
-        if value:
-            return quertset.filter(discount__gt=0)
-        return quertset
+    category = filters.NumberFilter(field_name="category_id")
+    brand = filters.NumberFilter(field_name="brand_id")
+    price_min = filters.NumberFilter(field_name="price", lookup_expr="gte")
+    price_max = filters.NumberFilter(field_name="price", lookup_expr="lte")
+    in_stock = filters.BooleanFilter(method="filter_in_stock")
+    has_discount = filters.BooleanFilter(method="filter_has_discount")
+    rating_min = filters.NumberFilter(field_name="average_rating", lookup_expr="gte")
 
     class Meta:
         model = Product
-        fields = ['category', 'brand', 'price_min', 'price_max', 'stock_min', 'stock_max', 'discount']
+        fields = ["category", "brand"]
 
+    def filter_in_stock(self, queryset, name, value):
+        return queryset.filter(stock__gt=0) if value else queryset.filter(stock=0)
 
-class CategoryFilter(filters.FilterSet):
-    name = filters.CharFilter(lookup_expr='icontains')
-    class Meta:
-        model = Category
-        fields = ['name', 'description']
-
-
-class BrandFilter(filters.FilterSet):
-    name = filters.CharFilter(lookup_expr='icontains')
-    class Meta:
-        model = Brand
-        fields = ['name', 'description']
-
-
-class ProductImageFilter(filters.FilterSet):
-    is_primary = filters.BooleanFilter()
-    class Meta:
-        model = ProductImage
-        fields = ['is_primary']
-
-
-class ProductFieldFilter(filters.FilterSet):
-    field_type = filters.CharFilter(lookup_expr='exact')
-    class Meta:
-        model = ProductField
-        fields = ['field_type']
-
-class ProductFieldValueFilter(filters.FilterSet):
-    field = filters.NumberFilter(field_name='field__id', lookup_expr='exact')
-    value = filters.CharFilter(lookup_expr='icontains')
-
-    class Meta:
-        model = ProductsFieldValue
-        fields = ['field', 'value']
-
+    def filter_has_discount(self, queryset, name, value):
+        return queryset.filter(discount__gt=0) if value else queryset.filter(discount=0)

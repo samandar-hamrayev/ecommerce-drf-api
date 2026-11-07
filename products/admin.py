@@ -1,30 +1,49 @@
 from django.contrib import admin
-from . import models
 
-@admin.register(models.Product)
+from .models import Brand, Category, Product, ProductField, ProductFieldValue, ProductImage
+
+
+class ProductImageInline(admin.TabularInline):
+    model = ProductImage
+    extra = 0
+
+
+class ProductFieldValueInline(admin.TabularInline):
+    model = ProductFieldValue
+    extra = 0
+    autocomplete_fields = ["field"]
+
+
+@admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    model = models.Product
-    list_display = [field.name for field in models.Product._meta.fields]
+    list_display = ["id", "name", "category", "brand", "price", "discount", "stock", "is_active"]
+    list_filter = ["is_active", "category", "brand"]
+    list_editable = ["stock", "is_active"]
+    list_select_related = ["category", "brand"]
+    search_fields = ["name", "description"]
+    autocomplete_fields = ["category", "brand"]
+    readonly_fields = ["created_by", "created", "updated"]
+    inlines = [ProductImageInline, ProductFieldValueInline]
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
 
-@admin.register(models.Category)
+@admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.Category._meta.fields]
+    list_display = ["id", "name", "created"]
+    search_fields = ["name"]
 
-@admin.register(models.Brand)
+
+@admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.Brand._meta.fields]
-
-@admin.register(models.ProductImage)
-class ProductImageAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.ProductImage._meta.fields]
+    list_display = ["id", "name", "created"]
+    search_fields = ["name"]
 
 
-@admin.register(models.ProductField)
+@admin.register(ProductField)
 class ProductFieldAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.ProductField._meta.fields]
-
-
-@admin.register(models.ProductsFieldValue)
-class ProductsFieldValueAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.ProductsFieldValue._meta.fields]
+    list_display = ["id", "name", "field_type"]
+    search_fields = ["name"]
