@@ -1,82 +1,88 @@
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
-from .models import Basket, BasketItem
+
 from products.models import Product
-from rest_framework.response import Response
+
+from .models import Cart, CartItem
 
 
-class BasketItemSerializer(serializers.ModelSerializer):
-    product = serializers.PrimaryKeyRelatedField(read_only=True)
+class CartProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ["id", "name", "price", "discount", "stock"]
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product = CartProductSerializer(read_only=True)
     product_id = serializers.PrimaryKeyRelatedField(
-        queryset=Product.objects.all(), source='product', write_only=True
+        queryset=Product.objects.filter(is_active=True), source="product", write_only=True
     )
-
+    quantity = serializers.IntegerField(min_value=1, max_value=1000)
+    unit_price = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     total_price = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
-        model = BasketItem
-        fields = ['id', 'product', 'product_id', 'quantity', 'added_at', 'total_price']
-        read_only_fields = ['added_at']
+        model = CartItem
+        fields = [
+            "id",
+            "product",
+            "product_id",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "added_at",
+        ]
+        read_only_fields = ["added_at"]
+
+    def validate(self, attrs):
+        # Stock is only *checked* here (soft check for UX); it is reserved
+        # atomically at checkout with a row lock, see orders.services.
+        product = attrs.get("product") or self.instance.product
+        quantity = attrs.get("quantity", 1)
+        if self.instance is None:
+            existing = CartItem.objects.filter(cart=self.context["cart"], product=product).first()
+            if existing:
+                quantity += existing.quantity
+        if quantity > product.stock:
+            raise serializers.ValidationError(
+                {"quantity": f"Only {product.stock} item(s) of '{product.name}' in stock."}
+            )
+        return attrs
 
     def create(self, validated_data):
-        basket = self.context['basket']
-        product = validated_data['product']
-        quantity = validated_data['quantity']
+        cart = self.context["cart"]
+        product = validated_data["product"]
+        quantity = validated_data.get("quantity", 1)
+        try:
+            with transaction.atomic():
+                item, created = CartItem.objects.select_for_update().get_or_create(
+                    cart=cart, product=product, defaults={"quantity": quantity}
+                )
+                if not created:
+                    item.quantity += quantity
+                    item.save(update_fields=["quantity"])
+        except IntegrityError:  # concurrent insert of the same product
+            item = CartItem.objects.get(cart=cart, product=product)
+        return item
 
 
-        if quantity < 1:
-            raise serializers.ValidationError({"error": "You must purchase at least 1 product"})
+class CartItemUpdateSerializer(CartItemSerializer):
+    """PATCH only changes the quantity; the product is fixed."""
 
-        if quantity <= product.stock:
-            product.stock -= quantity
-            product.save()
-        else:
-            raise serializers.ValidationError({
-                "quantity": f"Only {product.stock} items available in stock."
-            })
-
-        existing_item = BasketItem.objects.filter(basket=basket, product=product).first()
-        if existing_item:
-            existing_item.quantity += quantity
-            existing_item.save()
-            return existing_item
-
-        return BasketItem.objects.create(basket=basket, **validated_data)
-
-    def update(self, instance, validated_data):
-        basket = self.context['basket']
-        quantity = validated_data.get('quantity', instance.quantity)
-
-        quantity_diff = quantity - instance.quantity
-
-        if quantity_diff > 0:
-            if quantity_diff <= instance.product.stock:
-                instance.product.stock -= quantity_diff
-                instance.product.save()
-            else:
-                raise serializers.ValidationError({
-                    "quantity": f"Only {instance.product.stock} items available in stock."
-                })
-        elif quantity_diff < 0:
-            instance.product.stock -= quantity_diff
-            instance.product.save()
-
-        instance.quantity = quantity
-        if instance.quantity <= 0:
-            instance.product.stock += instance.quantity
-            instance.product.save()
-            instance.delete()
-            return Response({"message": f"The {instance.product.name} in your basket has been removed."})
-        else:
-            instance.save()
-        return instance
+    def get_fields(self):
+        fields = super().get_fields()
+        fields.pop("product_id")
+        return fields
 
 
-class BasketSerializer(serializers.ModelSerializer):
-    items = BasketItemSerializer(many=True, read_only=True)
-    user = serializers.PrimaryKeyRelatedField(read_only=True)
-    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total_price = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    items_count = serializers.SerializerMethodField()
 
     class Meta:
-        model = Basket
-        fields = ['id', 'user', 'items', 'created', 'updated', 'total_price']
-        read_only_fields = ['user', 'created', 'updated']
+        model = Cart
+        fields = ["id", "items", "items_count", "total_price", "updated"]
+
+    def get_items_count(self, obj) -> int:
+        return sum(item.quantity for item in obj.items.all())

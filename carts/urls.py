@@ -1,12 +1,12 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import BasketViewSet, BasketItemViewSet
+from django.urls import include, path
+from rest_framework.routers import SimpleRouter
 
+from .views import CartItemViewSet, CartView
 
-router = DefaultRouter()
-router.register(r'baskets', BasketViewSet, basename='basket')
-router.register(r'my-basket', BasketItemViewSet, basename='my-basket')
+router = SimpleRouter()
+router.register("cart/items", CartItemViewSet, basename="cart-item")
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path("cart/", CartView.as_view(), name="cart"),
+    path("", include(router.urls)),
 ]

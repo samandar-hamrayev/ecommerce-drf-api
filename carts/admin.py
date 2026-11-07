@@ -1,14 +1,17 @@
 from django.contrib import admin
-from . import models
+
+from .models import Cart, CartItem
 
 
+class CartItemInline(admin.TabularInline):
+    model = CartItem
+    extra = 0
+    autocomplete_fields = ["product"]
 
-@admin.register(models.Basket)
-class BasketAdmin(admin.ModelAdmin):
-    model = models.Basket
-    list_display = [field.name for field in models.Basket._meta.fields]
 
-@admin.register(models.BasketItem)
-class BasketItemAdmin(admin.ModelAdmin):
-    model = models.BasketItem
-    list_display = [field.name for field in models.BasketItem._meta.fields]
+@admin.register(Cart)
+class CartAdmin(admin.ModelAdmin):
+    list_display = ["id", "user", "created", "updated"]
+    list_select_related = ["user"]
+    search_fields = ["user__email"]
+    inlines = [CartItemInline]
