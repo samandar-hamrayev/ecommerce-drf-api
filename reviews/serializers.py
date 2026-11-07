@@ -1,62 +1,39 @@
 from rest_framework import serializers
 
-from orders.models import OrderItem
+from orders.models import Order, OrderItem
 from products.models import Product
-from reviews.models import Review
+
+from .models import Review
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    user = serializers.CharField(source='user.email', read_only=True)
+    user = serializers.CharField(source="user.full_name", read_only=True)
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
 
     class Meta:
         model = Review
-        fields = ['id', 'user', 'product', 'text', 'value', 'created', 'updated']
-        read_only_fields = ['id', 'user', 'created', 'updated']
+        fields = ["id", "user", "product", "rating", "comment", "created", "updated"]
+        read_only_fields = ["created", "updated"]
+
+    def validate_product(self, product):
+        if self.instance is not None and product != self.instance.product:
+            raise serializers.ValidationError("The product of a review cannot be changed.")
+        return product
 
     def validate(self, attrs):
-        request = self.context['request']
-        product = attrs.get('product')
-        view = attrs.get('view')
-
-        if not product and view:
-            product_id = view.kwargs.get('product_pk')
-            if product_id:
-                try:
-                    attrs['product'] = Product.objects.get(id=product_id)
-                except Product.DoesNotExist:
-                    raise serializers.ValidationError({"product": "Product does not exist."})
-            else:
-                raise serializers.ValidationError({"product": "Product is required."})
-
-        if not product:
-            raise serializers.ValidationError({"product": "Product is required."})
-
-        user = request.user
-        has_purchased = OrderItem.objects.filter(
-            order__basket__user = user,
-            product=product,
-            order__status = 'delivered'
+        if self.instance is not None:
+            return attrs
+        user = self.context["request"].user
+        product = attrs["product"]
+        if Review.objects.filter(user=user, product=product).exists():
+            raise serializers.ValidationError(
+                {"product": "You have already reviewed this product."}
+            )
+        purchased = OrderItem.objects.filter(
+            order__user=user, order__status=Order.Status.DELIVERED, product=product
         ).exists()
-        if not has_purchased:
-            raise serializers.ValidationError({"error": "You can only review products you have purchased and received."})
-
-        if not attrs.get('text') and not attrs.get('value'):
-            raise serializers.ValidationError({"error": "At least one of 'text' or 'value' must be provided."})
-
+        if not purchased:
+            raise serializers.ValidationError(
+                {"product": "You can only review products from your delivered orders."}
+            )
         return attrs
-
-    def create(self, validated_data):
-        product = validated_data['product']
-        if Review.objects.filter(user=self.context['request'].user, product=product).exists():
-            raise serializers.ValidationError({"detail": "You can only review one product once."})
-        validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        if instance.user != self.context['request'].user:
-            raise serializers.ValidationError({"error": "You can only edit your own reviews."})
-        return super().update(instance, validated_data)
-
-
-
-

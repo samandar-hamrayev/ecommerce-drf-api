@@ -1,27 +1,30 @@
+from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
-from users.models import User
+
 from products.models import Product
 
+
 class Review(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='reviews')
-    text = models.TextField()
-    value = models.PositiveIntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(5)],
-        blank=True, null=True
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews"
     )
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="reviews")
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    comment = models.TextField(blank=True)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        if self.text and self.value:
-            return f"Review by {self.user.email} on {self.product.name}: {self.value}/5 - {self.text[:20]}"
-        elif self.text:
-            return f"Comment by {self.user.email} on {self.product.name}: {self.text[:20]}"
-        elif self.value:
-            return f"Rating by {self.user.email} on {self.product.name}: {self.value}/5"
-        return f"Review by {self.user.email} on {self.product.name}"
-
     class Meta:
-        unique_together = ('user', 'product')
+        ordering = ["-created"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "product"], name="one_review_per_user_product"),
+            models.CheckConstraint(
+                condition=models.Q(rating__gte=1, rating__lte=5), name="review_rating_1_5"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.rating}/5 by {self.user} on {self.product}"

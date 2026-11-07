@@ -1,6 +1,11 @@
 from django.contrib import admin
-from . import models
 
-@admin.register(models.Review)
+from .models import Review
+
+
+@admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in models.Review._meta.fields]
+    list_display = ["id", "product", "user", "rating", "created"]
+    list_filter = ["rating"]
+    list_select_related = ["product", "user"]
+    search_fields = ["comment", "user__email", "product__name"]
