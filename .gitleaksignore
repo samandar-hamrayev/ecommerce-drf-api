@@ -1,0 +1,3 @@
+# Dummy test-fixture passwords in earlier commits (replaced since); not real secrets.
+aa75492f674d9cfc7d02733b1211012f1a7fee8e:tests/test_auth.py:generic-api-key:116
+d93239a1c2c8377d8dddd85a6269e685c5769748:tests/conftest.py:generic-api-key:13

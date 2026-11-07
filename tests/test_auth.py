@@ -113,18 +113,18 @@ def test_user_admin_endpoints_are_staff_only(user_client, staff_client, other_us
 def test_change_password(user_client, user):
     wrong = user_client.post(
         reverse("password-change"),
-        {"old_password": "nope", "new_password": "An0ther-pass-456"},
+        {"old_password": "nope", "new_password": "purple-monkey-dishwasher"},
         format="json",
     )
     assert wrong.status_code == 400
     ok = user_client.post(
         reverse("password-change"),
-        {"old_password": PASSWORD, "new_password": "An0ther-pass-456"},
+        {"old_password": PASSWORD, "new_password": "purple-monkey-dishwasher"},
         format="json",
     )
     assert ok.status_code == 204
     user.refresh_from_db()
-    assert user.check_password("An0ther-pass-456")
+    assert user.check_password("purple-monkey-dishwasher")
 
 
 def test_password_reset_does_not_leak_accounts(api_client, user):
@@ -139,9 +139,9 @@ def test_password_reset_does_not_leak_accounts(api_client, user):
     code = EmailVerification.objects.get(user=user).code
     confirm = api_client.post(
         reverse("password-reset-confirm"),
-        {"email": user.email, "code": code, "new_password": "Brand-new-pass-789"},
+        {"email": user.email, "code": code, "new_password": "quiet-river-lantern"},
         format="json",
     )
     assert confirm.status_code == 204
     user.refresh_from_db()
-    assert user.check_password("Brand-new-pass-789")
+    assert user.check_password("quiet-river-lantern")

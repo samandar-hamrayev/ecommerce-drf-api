@@ -10,7 +10,7 @@ from orders.services import create_order_from_cart
 from products.models import Brand, Category, Product
 from users.models import User
 
-PASSWORD = "S3cure-pass-123"
+PASSWORD = "correct-horse-battery"
 
 
 @pytest.fixture(autouse=True)
