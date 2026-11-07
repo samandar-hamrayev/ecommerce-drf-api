@@ -1,50 +1,69 @@
-from rest_framework import status
+from django.db.models import Prefetch
+from drf_spectacular.utils import extend_schema
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
+
+from . import services
 from .models import Order, OrderItem
-from .serializers import OrderSerializer, OrderItemSerializer
+from .serializers import CheckoutSerializer, OrderSerializer, OrderStatusSerializer
 
 
-class OrderItemViewSet(ModelViewSet):
-    serializer_class = OrderItemSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['product', 'quantity', 'order']
-    search_fields = ['product__name', 'product__description']
-    ordering_fields = ['quantity', 'created', 'price_at_order']
-    ordering = ['-created']
+@extend_schema(tags=["orders"])
+class OrderViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Customers see their own orders; staff see everything."""
 
-    def get_queryset(self):
-        return OrderItem.objects.filter(order__basket__user=self.request.user)
-
-
-class OrderViewSet(ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'basket', 'total_price']
-    search_fields = ['basket__user__email']
-    ordering_fields = ['created', 'total_price', 'delivered_at']
-    ordering = ['-created']
+    filterset_fields = ["status"]
+    search_fields = ["user__email", "items__product_name"]
+    ordering_fields = ["created", "total_amount"]
+
+    queryset = Order.objects.none()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Order.objects.none()
+        qs = Order.objects.select_related("user").prefetch_related(
+            Prefetch("items", OrderItem.objects.order_by("id"))
+        )
         if self.request.user.is_staff:
-            return Order.objects.all()
-        return Order.objects.filter(basket__user=self.request.user)
+            return qs
+        return qs.filter(user=self.request.user)
 
-    def get_permissions(self):
-        if self.action in ['update', 'partial_update', 'destroy']:
-            return [IsAdminUser()]
-        return [IsAuthenticated()]
+    @extend_schema(request=CheckoutSerializer, responses={201: OrderSerializer})
+    def create(self, request):
+        """Checkout: create an order from the caller's own cart."""
+        serializer = CheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = services.create_order_from_cart(request.user, **serializer.validated_data)
+        order = self.get_queryset().get(pk=order.pk)
+        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=['POST'], url_path='make-order')
-    def create_from_basket(self, request):
-        serializer = OrderSerializer(data={}, context={'request': request})
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    @extend_schema(request=None, responses=OrderSerializer)
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Customers may cancel their own order while it is still unpaid."""
+        order = self.get_object()
+        if not request.user.is_staff and order.status != Order.Status.PENDING:
+            return Response(
+                {"status": "Only unpaid orders can be cancelled. Contact support for refunds."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        services.change_status(order, Order.Status.CANCELLED)
+        return Response(OrderSerializer(self.get_queryset().get(pk=order.pk)).data)
+
+    @extend_schema(request=OrderStatusSerializer, responses=OrderSerializer)
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="status")
+    def set_status(self, request, pk=None):
+        """Staff-only: move the order through shipped / delivered / cancelled."""
+        order = self.get_object()
+        serializer = OrderStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.change_status(order, serializer.validated_data["status"])
+        return Response(OrderSerializer(self.get_queryset().get(pk=order.pk)).data)
