@@ -15,4 +15,5 @@ def test_openapi_schema_and_swagger_ui(api_client):
     assert schema.status_code == 200
     paths = schema.json()["paths"]
     assert "/api/payments/click/prepare/" in paths
+    assert "/api/payments/payme/" in paths
     assert api_client.get(reverse("swagger-ui")).status_code == 200

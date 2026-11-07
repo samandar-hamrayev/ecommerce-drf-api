@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 
 from orders.models import Order
 
-from .providers import ClickProvider, get_provider
+from .providers import ClickProvider, PaymeProvider, get_provider
 from .serializers import CheckoutRequestSerializer, CheckoutResponseSerializer
 
 
@@ -103,3 +103,28 @@ class ClickCompleteView(ProviderCallbackView):
 
     def post(self, request):
         return Response(ClickProvider().complete(_click_params(request)))
+
+
+@extend_schema(
+    tags=["payments"],
+    request=OpenApiTypes.OBJECT,
+    responses=OpenApiTypes.OBJECT,
+    summary="Payme Merchant API (JSON-RPC 2.0) endpoint",
+    examples=[
+        OpenApiExample(
+            "CheckPerformTransaction",
+            value={
+                "id": 1,
+                "method": "CheckPerformTransaction",
+                "params": {"amount": 15000000, "account": {"order_id": "42"}},
+            },
+            request_only=True,
+        )
+    ],
+)
+class PaymeView(ProviderCallbackView):
+    parser_classes: list = []  # we read the raw body to report -32700 ourselves
+
+    def post(self, request):
+        body = PaymeProvider().handle(request.body, request.META.get("HTTP_AUTHORIZATION"))
+        return Response(body, status=status.HTTP_200_OK)
