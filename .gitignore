@@ -1,24 +1,30 @@
-# Django specific
-*.pyc
+# Python
 __pycache__/
-db.sqlite3
-media/
-
-# Migrations files
-*migrations/
-# Virtual environment
+*.py[cod]
+*.egg-info/
+.venv/
 venv/
 env/
 
-# images
-media/images
+# Django
+db.sqlite3
+media/
+staticfiles/
+*.log
 
-# Environment variables
-*.env
+# Environment
+.env
+.env.*
+!.env.example
 
-# IDE specific
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# IDE / OS
 .vscode/
 .idea/
-
-# Cache files
-*.log
+.DS_Store

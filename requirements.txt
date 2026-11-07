@@ -1,0 +1,11 @@
+Django>=5.2.8,<6.0
+djangorestframework>=3.16
+djangorestframework-simplejwt>=5.5
+django-filter>=25.1
+drf-spectacular>=0.28
+drf-nested-routers>=0.94
+django-environ>=0.12
+psycopg[binary]>=3.2
+Pillow>=11.0
+gunicorn>=23.0
+whitenoise>=6.9

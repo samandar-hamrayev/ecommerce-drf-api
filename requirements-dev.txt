@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8.3
+pytest-django>=4.9
+pytest-cov>=6.0
+ruff>=0.17.4
+pre-commit>=4.0
